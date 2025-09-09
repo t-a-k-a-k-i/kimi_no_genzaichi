@@ -21,7 +21,7 @@ const cam = {
   pitchMax:  Math.PI * 0.75
 };
 
-const FX_DURATION_MS = 300;
+const FX_DURATION_MS = 300;       // ブラー演出
 
 const shuffleDisplay = true;
 
@@ -115,7 +115,7 @@ function buildEvPartition(size, maxPart) {
 }
 
 // =======================================================
-// three.js 初期化
+// three.js 初期化（ライトは不要：全て MeshBasic/LineBasic）
 // =======================================================
 const shell = document.getElementById('appShell');
 const canvas = document.getElementById('scene');
@@ -130,8 +130,6 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color('#a9a9a9');
 
 const camera = new THREE.PerspectiveCamera(cam.fov, 1, cam.near, cam.far);
-
-// （ライト削除：MeshBasicMaterial/LineBasicMaterial のため不要）
 
 function resize() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -495,20 +493,35 @@ function recenterNow(){
 }
 
 // =======================================================
-// 遷移演出：すべてブラー
+// 遷移演出：すべてブラー + 方位補償（見た目の配置を保存）
 // =======================================================
 let isTransitioning = false;
+
+// 原点(0,0,0)への方位角（x-z平面の角度）。P→原点ベクトルは -P。
+function angleToCenter(pos){ return Math.atan2(-pos.z, -pos.x); }
 
 function runBlurTransition(destIndex){
   if (isTransitioning) return; isTransitioning = true;
   shell.classList.add('fx--busy');
+
+  // 遷移開始前：現在位置の「原点への方位角」を記録
+  const a1 = angleToCenter(camera.position);
+
+  // ブラー開始
   shell.classList.remove('fx--blur'); void shell.offsetWidth;
   shell.classList.add('fx--blur');
 
   const mid = setTimeout(() => {
+    // 目的地へスナップ
     currentIndex = destIndex;
     snapCameraToIndex(currentIndex);
     applyLayerFog(EvPartition[currentIndex]);
+
+    // ★ 方位補償：遷移前後で見た目の配置を保つため、ゼロ点をΔだけ進める
+    const a2 = angleToCenter(camera.position);              // = angleToCenter(islandEyePos(dest))
+    const d  = normAng(a2 - a1);
+    yawZeroUnwrapped += d;                                   // ← 補償の核心
+
   }, FX_DURATION_MS/2);
 
   const onEnd = () => {
@@ -537,7 +550,7 @@ controlBar.addEventListener('click', (e) => {
   if (!sym) return;
 
   const j = symbolToCol[sym];
-  runBlurTransition(j); // 全遷移ブラー
+  runBlurTransition(j); // 全遷移ブラー + 方位補償
 });
 
 // =======================================================
