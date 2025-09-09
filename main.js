@@ -21,11 +21,7 @@ const cam = {
   pitchMax:  Math.PI * 0.75
 };
 
-const FX_DURATION_MS = 300;  // 自己ループ時のブラー
-// カメラ移動の時間
-const MOVE_DUR_HORIZONTAL = 360;
-const MOVE_DUR_BASE = 360;
-const MOVE_DUR_PER_LEVEL = 140;
+const FX_DURATION_MS = 300;       // ブラー演出
 
 const shuffleDisplay = true;
 
@@ -119,7 +115,7 @@ function buildEvPartition(size, maxPart) {
 }
 
 // =======================================================
-// three.js 初期化（ライト不要）
+// three.js 初期化（ライトは不要：全て MeshBasic/LineBasic）
 // =======================================================
 const shell = document.getElementById('appShell');
 const canvas = document.getElementById('scene');
@@ -418,7 +414,7 @@ async function requestPermissionIfNeeded(){
   }
 }
 const ua = navigator.userAgent;
-the isiOS = /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isiOS = /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
 function setupInput(){
   const hasDO = 'DeviceOrientationEvent' in window;
@@ -497,95 +493,47 @@ function recenterNow(){
 }
 
 // =======================================================
-// 遷移演出：自己ループ＝ブラー、その他＝カメラ移動（方位補償）
+// 遷移演出：すべてブラー + 方位補償（見た目の配置を保存）
 // =======================================================
 let isTransitioning = false;
 
 // 原点(0,0,0)への方位角（x-z平面の角度）。P→原点ベクトルは -P。
 function angleToCenter(pos){ return Math.atan2(-pos.z, -pos.x); }
 
-function pickTransitionType(i, j){
-  if (j === i) return 'self'; // 自己ループ
-  const L1 = EvPartition[i], L2 = EvPartition[j];
-  return (L1 === L2) ? 'horizontal' : 'diagonal';
-}
-
 function runBlurTransition(destIndex){
   if (isTransitioning) return; isTransitioning = true;
   shell.classList.add('fx--busy');
+
+  // 遷移開始前：現在位置の「原点への方位角」を記録
+  const a1 = angleToCenter(camera.position);
+
+  // ブラー開始
   shell.classList.remove('fx--blur'); void shell.offsetWidth;
   shell.classList.add('fx--blur');
 
-  // ブラー中間で位置スナップし、方位補償だけ適用
-  const a1 = angleToCenter(camera.position);
   const mid = setTimeout(() => {
+    // 目的地へスナップ
     currentIndex = destIndex;
     snapCameraToIndex(currentIndex);
     applyLayerFog(EvPartition[currentIndex]);
 
-    const a2 = angleToCenter(camera.position);
+    // ★ 方位補償：遷移前後で見た目の配置を保つため、ゼロ点をΔだけ進める
+    const a2 = angleToCenter(camera.position);              // = angleToCenter(islandEyePos(dest))
     const d  = normAng(a2 - a1);
-    yawZeroUnwrapped += d;
+    yawZeroUnwrapped += d;                                   // ← 補償の核心
+
   }, FX_DURATION_MS/2);
 
   const onEnd = () => {
     shell.removeEventListener('animationend', onEnd);
     clearTimeout(mid);
     shell.classList.remove('fx--blur','fx--busy');
+
     if (EvPartition[currentIndex] === levelCount) alert("ゴールしました");
     renderButtonsFor(currentIndex);
     isTransitioning = false;
   };
   shell.addEventListener('animationend', onEnd, { once:true });
-}
-
-// カメラ移動（方位補償をアニメ中に滑らか適用）
-function animateCameraToIsland(destIndex, dur){
-  if (isTransitioning) return; isTransitioning = true;
-  shell.classList.add('fx--busy');
-
-  const P1 = camera.position.clone();
-  const P2 = islandEyePos(destIndex);
-  const a1 = angleToCenter(P1);
-  const a2 = angleToCenter(P2);
-  const d  = normAng(a2 - a1);            // 方位差
-  const yawZeroStart = yawZeroUnwrapped;   // 補償の起点
-
-  const t0 = performance.now();
-  const ease = u => 0.5 * (1 - Math.cos(Math.PI*u));
-
-  function tick(t){
-    const u = Math.min(1, (t - t0) / dur);
-    const e = ease(u);
-
-    // 位置を補間
-    camera.position.lerpVectors(P1, P2, e);
-    // 方位補償を進捗に応じて線形に適用（見た目の回転を相殺）
-    yawZeroUnwrapped = yawZeroStart + d * e;
-
-    if (u < 1) { requestAnimationFrame(tick); }
-    else {
-      // 終了処理
-      camera.position.copy(P2);
-      yawZeroUnwrapped = yawZeroStart + d; // 念のため最終値に揃える
-      currentIndex = destIndex;
-      applyLayerFog(EvPartition[currentIndex]);
-      if (EvPartition[currentIndex] === levelCount) alert("ゴールしました");
-      renderButtonsFor(currentIndex);
-      shell.classList.remove('fx--busy');
-      isTransitioning = false;
-    }
-  }
-  requestAnimationFrame(tick);
-}
-
-function runCameraHorizontal(destIndex){
-  animateCameraToIsland(destIndex, MOVE_DUR_HORIZONTAL);
-}
-function runCameraDiagonal(destIndex){
-  const dy = Math.abs(EvPartition[currentIndex] - EvPartition[destIndex]);
-  const dur = Math.max(MOVE_DUR_HORIZONTAL, MOVE_DUR_BASE + MOVE_DUR_PER_LEVEL * dy);
-  animateCameraToIsland(destIndex, dur);
 }
 
 controlBar.addEventListener('click', (e) => {
@@ -602,10 +550,7 @@ controlBar.addEventListener('click', (e) => {
   if (!sym) return;
 
   const j = symbolToCol[sym];
-  const type = pickTransitionType(currentIndex, j);
-  if (type === 'self') runBlurTransition(j);
-  else if (type === 'horizontal') runCameraHorizontal(j);
-  else runCameraDiagonal(j);
+  runBlurTransition(j); // 全遷移ブラー + 方位補償
 });
 
 // =======================================================
