@@ -1,3 +1,4 @@
+// =======================================================
 // 基本パラメータ
 // =======================================================
 const matrixSize = 7;
@@ -20,7 +21,8 @@ const cam = {
   pitchMax:  Math.PI * 0.75
 };
 
-const FX_DURATION_MS = 300;
+const FX_DURATION_MS = 300;  // 自己ループでのブラー
+// カメラ移動の時間（デバッグ用：自己ループ以外は移動アニメ）
 const MOVE_DUR_HORIZONTAL = 360;
 const MOVE_DUR_BASE = 360;
 const MOVE_DUR_PER_LEVEL = 140;
@@ -59,7 +61,7 @@ function generateAdjacencyWithBalance(size, { p_self, maxDrop, downarrow, weight
   for (let i = 0; i < size; i++) {
     const row = new Array(size).fill(0);
 
-    if (i < size - 1) row[i + 1] = 1;
+    if (i < size - 1) row[i + 1] = 1; // 前進保証
     const selfLoop = (i < size - 1 && Math.random() < p_self) ? 1 : 0;
     if (selfLoop) row[i] = 1;
 
@@ -88,7 +90,7 @@ function weightedSampleWithoutReplacement(pool, m) {
   return out;
 }
 
-// ===== 整数分割 → EvPartition =====
+// ===== 整数分割 → EvPartition（各ノードのレイヤ番号：1-based） =====
 function integerPartitionEnumerateWithMax(n, max) {
   const partitions = [];
   (function h(rem, cur) {
@@ -117,7 +119,7 @@ function buildEvPartition(size, maxPart) {
 }
 
 // =======================================================
-// three.js 初期化
+// three.js 初期化（ライト不要）
 // =======================================================
 const shell = document.getElementById('appShell');
 const canvas = document.getElementById('scene');
@@ -151,7 +153,7 @@ const levelToIndices = Array.from({ length: levelCount }, () => []);
 for (let i = 0; i < EvPartition.length; i++) levelToIndices[EvPartition[i]-1].push(i);
 
 // =======================================================
-// 配置
+// 配置（円柱ラップ＋螺旋＋ジッター＋リラックス）
 // =======================================================
 const layout = {
   r0: 8.0, band: 0.0,
@@ -186,15 +188,16 @@ function generateLayerAngles(L, count, rL){
 }
 
 // =======================================================
-// 島の生成
+// 島（側面：openCone / 底面：片面三角）+ アウトライン
 // =======================================================
-const baseSideColor = new THREE.Color('#808000');
-const baseCapColor  = new THREE.Color('#32cd32');
+const baseSideColor = new THREE.Color('#808000'); // olive
+const baseCapColor  = new THREE.Color('#32cd32'); // limegreen
 const bgColor       = new THREE.Color('#a9a9a9');
 
 const sideGeo = new THREE.ConeGeometry(island.radius, island.height, 3, 1, true);
 sideGeo.rotateX(Math.PI);
 
+// 底面（三角形）ジオメトリ：法線が上向きになるよう巻き方向を自動修正
 function makeCapGeometryFromSide(sideGeo, yTarget, yOffset=-0.001){
   const pos = sideGeo.attributes.position.array;
   const raw = [];
@@ -215,6 +218,7 @@ function makeCapGeometryFromSide(sideGeo, yTarget, yOffset=-0.001){
   for (let i=0;i<3;i++){ arr[3*i]=verts[i].x; arr[3*i+1]=verts[i].y; arr[3*i+2]=verts[i].z; }
   g.setAttribute('position', new THREE.BufferAttribute(arr,3));
 
+  // いったん張って法線を確認、下向きなら巻き方向を反転
   g.setIndex([0,1,2]);
   g.computeVertexNormals();
   const normals = g.getAttribute('normal');
@@ -230,6 +234,7 @@ const capGeo = makeCapGeometryFromSide(sideGeo, +island.height/2);
 const edgesGeo = new THREE.EdgesGeometry(sideGeo, 40);
 const edgeMat  = new THREE.LineBasicMaterial({ color: 0x000000, transparent:true, opacity: 0.25 });
 
+// ノード生成
 const nodes = new Array(matrixSize);
 for (let L=1; L<=levelCount; L++){
   const idxs = levelToIndices[L-1], count = idxs.length;
@@ -240,7 +245,7 @@ for (let L=1; L<=levelCount; L++){
 
     const g = new THREE.Group();
     const sideMesh = new THREE.Mesh(sideGeo, new THREE.MeshBasicMaterial({ color: baseSideColor }));
-    const capMesh  = new THREE.Mesh(capGeo,  new THREE.MeshBasicMaterial({ color: baseCapColor, side: THREE.FrontSide }));
+    const capMesh  = new THREE.Mesh(capGeo,  new THREE.MeshBasicMaterial({ color: baseCapColor, side: THREE.FrontSide })); // 片面
     const outline = new THREE.LineSegments(edgesGeo, edgeMat);
     outline.visible = false;
 
@@ -254,7 +259,7 @@ for (let L=1; L<=levelCount; L++){
 }
 
 // =======================================================
-// 霧の適用
+// Δに応じた“霧”の適用
 // =======================================================
 const matCache = { side:{}, cap:{} };
 const fogParams = {
@@ -274,7 +279,7 @@ function materialFor(kind, delta){
     opacity: fogParams[d].opacity,
     depthWrite: fogParams[d].depthWrite
   };
-  if (kind === 'cap') opts.side = THREE.FrontSide;
+  if (kind === 'cap') opts.side = THREE.FrontSide; // 裏面非表示
   const mat = new THREE.MeshBasicMaterial(opts);
   matCache[kind][d] = mat;
   return mat;
@@ -291,16 +296,17 @@ function applyLayerFog(currentLevel){
 }
 
 // =======================================================
-// カメラ・入出力（修正版：絶対方位保持）
+// ★ カメラ・入出力（DeviceOrientation：正統変換 + 連続ヨー + RECENTER=オフセット）
 // =======================================================
 let currentIndex = 0;
-let yaw = 0, pitch = 0;
+let yaw = 0, pitch = 0;                // 適用中のカメラ角
 const RAD = Math.PI / 180;
 const ORI_SMOOTH = 0.08;
 
 const TAU = Math.PI * 2;
-function normAng(x){ return ((x + Math.PI) % TAU + TAU) % TAU - Math.PI; }
+function normAng(x){ return ((x + Math.PI) % TAU + TAU) % TAU - Math.PI; } // [-π,π)
 
+// カメラ位置
 function islandEyePos(i){
   const p = nodes[i].position;
   return new THREE.Vector3(p.x, p.y + island.height/2 + eyeLift, p.z);
@@ -308,40 +314,46 @@ function islandEyePos(i){
 function snapCameraToIndex(i){ camera.position.copy(islandEyePos(i)); }
 snapCameraToIndex(currentIndex);
 
+// 線形補間
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 function lerp(a,b,t){ return a + (b - a) * t; }
 
+// 画面回転角の取得（deg）
 function getOrientationAngle(){
   if (screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
   if (typeof window.orientation === 'number') return window.orientation;
   return 0;
 }
 
+// α/β/γ + 画面回転 → クォータニオン
 const zee = new THREE.Vector3(0,0,1);
 const eulerTmp = new THREE.Euler();
 const q0 = new THREE.Quaternion();
-const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // -PI/2 around X
 function quaternionFromDevice(alphaRad, betaRad, gammaRad, orientRad){
   const q = new THREE.Quaternion();
-  eulerTmp.set(betaRad, alphaRad, -gammaRad, 'YXZ');
+  eulerTmp.set(betaRad, alphaRad, -gammaRad, 'YXZ'); // β, α, -γ
   q.setFromEuler(eulerTmp);
-  q.multiply(q1);
-  q.multiply(q0.setFromAxisAngle(zee, -orientRad));
+  q.multiply(q1); // device -> world
+  q.multiply(q0.setFromAxisAngle(zee, -orientRad)); // screen orientation 補正
   return q;
 }
 
-// 連続ヨーとゼロ点
+// 連続ヨー（アンラップ）とゼロ点＋オフセット
 let prevYawRaw = null;
-let yawUnwrapped = 0;
-let yawZeroUnwrapped = null;
+let yawUnwrapped = 0;            // デバイスからの連続ヨー
+let yawZeroUnwrapped = null;     // 起動キャリブのゼロ
+let yawOffset = 0;               // ★表示用オフセット（RECENTERで更新）
+
 let pitchZero = null;
 let zeroStart = null, zYawAcc = 0, zPitchAcc = 0, zN = 0;
 
-let lastPitchRaw = 0;
+let lastPitchRaw = 0;            // RECENTER用
 
 const permissionOverlay = document.getElementById('permissionOverlay');
 const enableBtn = document.getElementById('enableSensors');
 
+// ワールド基準の yaw/pitch を算出
 const eulerOut = new THREE.Euler();
 function onDeviceOrientation(e){
   const a = (e.alpha ?? 0) * RAD;
@@ -351,9 +363,10 @@ function onDeviceOrientation(e){
   const q = quaternionFromDevice(a, b, g, orientDeg * RAD);
 
   eulerOut.setFromQuaternion(q, 'YXZ');
-  const yawRaw   = eulerOut.y;
+  const yawRaw   = eulerOut.y;   // [-π,π] ラップ
   const pitchRaw = eulerOut.x;
 
+  // アンラップ
   if (prevYawRaw === null) prevYawRaw = yawRaw;
   const dYaw = normAng(yawRaw - prevYawRaw);
   yawUnwrapped += dYaw;
@@ -361,6 +374,7 @@ function onDeviceOrientation(e){
 
   lastPitchRaw = pitchRaw;
 
+  // 起動キャリブ（平均）
   if (yawZeroUnwrapped === null || pitchZero === null){
     const t = performance.now();
     if (zeroStart === null) zeroStart = t;
@@ -372,19 +386,21 @@ function onDeviceOrientation(e){
       pitchZero        = zPitchAcc / zN;
       zeroStart = null; zYawAcc = 0; zPitchAcc = 0; zN = 0;
     }
-    yaw   = lerp(yaw,   0, ORI_SMOOTH);
+    // キャリブ中は穏やかに 0 へ
+    yaw   = lerp(yaw, 0, ORI_SMOOTH);
     pitch = lerp(pitch, 0, ORI_SMOOTH);
     return;
   }
 
-  const yawTarget   = yawUnwrapped - yawZeroUnwrapped;
+  // ★絶対方位の維持：遷移の有無に関係なく「デバイスの向きそのまま」
+  const yawTarget   = (yawUnwrapped - yawZeroUnwrapped) + yawOffset;
   const pitchTarget = clamp(pitchRaw - pitchZero, cam.pitchMin, cam.pitchMax);
 
-  // 遷移中も通常と同じ平滑化を適用（修正点）
   yaw   = lerp(yaw,   yawTarget,   ORI_SMOOTH);
   pitch = lerp(pitch, pitchTarget, ORI_SMOOTH);
 }
 
+// 入力セットアップ
 async function startDeviceOrientation(){
   if (shell.requestFullscreen) { try { await shell.requestFullscreen(); } catch(_) {} }
   window.addEventListener('deviceorientation', onDeviceOrientation, true);
@@ -420,18 +436,21 @@ function setupInput(){
   } else if (hasDO && !needsUserGesture){
     startDeviceOrientation();
   } else {
-    setupPointerControls();
+    setupPointerControls(); // フォールバック：スワイプ
   }
 }
 
+// 端末の向きが変わったら全リセット
 window.addEventListener('orientationchange', () => {
   prevYawRaw = null;
   yawUnwrapped = 0;
   yawZeroUnwrapped = null;
+  yawOffset = 0;                 // ★オフセットもリセット
   pitchZero = null;
   zeroStart = null; zYawAcc = 0; zPitchAcc = 0; zN = 0;
 });
 
+// --- フォールバック：スワイプ操作 ---
 let isDragging = false;
 let lastX = 0, lastY = 0;
 function setupPointerControls(){
@@ -452,7 +471,7 @@ function setupPointerControls(){
 }
 
 // =======================================================
-// HUD
+// HUD（有効ボタン + RECENTER）
 // =======================================================
 function makeButton(sym){
   const b=document.createElement('button'); b.type='button';
@@ -472,27 +491,32 @@ function renderButtonsFor(i){
   for (let j=0;j<row.length;j++){ if (row[j] === 1){ const s = colToSymbol[j]; if (s !== undefined) syms.push(s); } }
   const shown = shuffleDisplay ? shuffle(syms) : syms;
   for (const s of shown) controlBar.appendChild(makeButton(s));
+
+  // 右端に RECENTER を常設
   controlBar.appendChild(makeRecenterButton());
 }
 
 function recenterNow(){
-  // 現在の向きをゼロにする（絶対方位を変えない）
+  // 今の向きを新ゼロにするが、見た目は変えない：
+  // yawApplied = (yawUnwrapped - yawZero) + yawOffset
+  // → yawZero を「今」に、yawOffset を「今の適用yaw」に置く
   yawZeroUnwrapped = yawUnwrapped;
+  yawOffset = yaw;                // 見た目不変
   pitchZero = lastPitchRaw;
 }
 
 // =======================================================
-// 遷移演出（修正版：方位補償を削除）
+// 遷移演出：自己ループ＝ブラー、その他＝カメラ移動（★方位補償は一切しない）
 // =======================================================
 let isTransitioning = false;
 
 function pickTransitionType(i, j){
-  if (j === i) return 'self';
+  if (j === i) return 'self'; // 自己ループ
   const L1 = EvPartition[i], L2 = EvPartition[j];
   return (L1 === L2) ? 'horizontal' : 'diagonal';
 }
 
-// 自己ループ：方位補償なし
+// --- 自己ループ：ブラー中間で位置だけスナップ ---
 function runBlurTransition(destIndex){
   if (isTransitioning) return; isTransitioning = true;
   shell.classList.add('fx--busy');
@@ -504,7 +528,6 @@ function runBlurTransition(destIndex){
     currentIndex = destIndex;
     snapCameraToIndex(currentIndex);
     applyLayerFog(EvPartition[currentIndex]);
-    // 方位補償を削除：絶対方位を保持
   }, FX_DURATION_MS/2);
 
   const onEnd = () => {
@@ -518,7 +541,7 @@ function runBlurTransition(destIndex){
   shell.addEventListener('animationend', onEnd, { once:true });
 }
 
-// カメラ移動：方位補償なし
+// --- カメラ移動：位置だけを補間（向きは完全維持） ---
 function animateCameraToIsland(destIndex, dur){
   if (isTransitioning) return; isTransitioning = true;
   shell.classList.add('fx--busy');
@@ -533,8 +556,7 @@ function animateCameraToIsland(destIndex, dur){
     const u = Math.min(1, (t - t0) / dur);
     const e = ease(u);
 
-    camera.position.lerpVectors(P1, P2, e);
-    // 方位補償を削除：絶対方位を保持
+    camera.position.lerpVectors(P1, P2, e); // ★位置のみ
 
     if (u < 1) { requestAnimationFrame(tick); }
     else {
@@ -546,3 +568,63 @@ function animateCameraToIsland(destIndex, dur){
       shell.classList.remove('fx--busy');
       isTransitioning = false;
     }
+  }
+  requestAnimationFrame(tick);
+}
+
+function runCameraHorizontal(destIndex){
+  animateCameraToIsland(destIndex, MOVE_DUR_HORIZONTAL);
+}
+function runCameraDiagonal(destIndex){
+  const dy = Math.abs(EvPartition[currentIndex] - EvPartition[destIndex]);
+  const dur = Math.max(MOVE_DUR_HORIZONTAL, MOVE_DUR_BASE + MOVE_DUR_PER_LEVEL * dy);
+  animateCameraToIsland(destIndex, dur);
+}
+
+controlBar.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+
+  if (btn.dataset.action === 'recenter'){
+    recenterNow();
+    return;
+  }
+
+  if (isTransitioning) return;
+  const sym = btn.dataset.sym;
+  if (!sym) return;
+
+  const j = symbolToCol[sym];
+  const type = pickTransitionType(currentIndex, j);
+  if (type === 'self') runBlurTransition(j);
+  else if (type === 'horizontal') runCameraHorizontal(j);
+  else runCameraDiagonal(j);
+});
+
+// =======================================================
+// ループ・初期化
+// =======================================================
+function updateCameraRotation(){
+  // 表示用にだけヨーを [-π,π) に正規化（内部は連続でもOK）
+  const yawForCam = normAng(yaw);
+  camera.rotation.set(pitch, yawForCam, 0, 'YXZ');
+}
+function loop(){ updateCameraRotation(); renderer.render(scene, camera); requestAnimationFrame(loop); }
+
+resize();
+snapCameraToIndex(currentIndex);
+renderButtonsFor(currentIndex);
+applyLayerFog(EvPartition[currentIndex]);
+setupInput();
+loop();
+
+// =======================================================
+// ユーティリティ
+// =======================================================
+function shuffleInPlace(arr){
+  for (let i=arr.length-1;i>0;i--){
+    const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+  return arr;
+}
+function shuffle(arr){ return shuffleInPlace(arr.slice()); }
