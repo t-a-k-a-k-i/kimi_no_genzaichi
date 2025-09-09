@@ -84,7 +84,7 @@ body {
   #controlBar { padding: 10px 12px; gap: 10px; }
 }
 
-/* ブラー（自己ループで使用） */
+/* ブラー（全遷移で使用） */
 .shell.fx--blur {
   animation: fxBlur var(--fx-dur) ease-in-out both;
   will-change: filter;
