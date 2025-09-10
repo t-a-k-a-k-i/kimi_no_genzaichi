@@ -60,8 +60,8 @@ body {
 
 /* RECENTER を右端に固定（左ボタン群との距離を最大化） */
 #controlBar .btn-recenter{
-  margin-left: auto;          /* 左グループと最大距離を取る */
-  position: sticky; right: 0; /* 横スクロールでも常に右端に貼り付く */
+  margin-left: auto;
+  position: sticky; right: 0;
   z-index: 1;
   min-width: 120px;
   height: var(--btn);
