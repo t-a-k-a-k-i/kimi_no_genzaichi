@@ -21,11 +21,7 @@ const cam = {
   pitchMax:  Math.PI * 0.75
 };
 
-const FX_DURATION_MS = 300;  // 自己ループ時ブラー
-// カメラ移動の時間
-const MOVE_DUR_HORIZONTAL = 360;
-const MOVE_DUR_BASE = 360;
-const MOVE_DUR_PER_LEVEL = 140;
+const FX_DURATION_MS = 300;  // すべての遷移でブラー使用
 
 const shuffleDisplay = true;
 
@@ -154,22 +150,22 @@ for (let i = 0; i < EvPartition.length; i++) levelToIndices[EvPartition[i]-1].pu
 
 // =======================================================
 // 配置（円周＋レイヤ毎ランダム回転 + ジッター + リラックス）
-//  提案1: レイヤごとのランダム回転 layerRot[L-1] を導入
-//  提案4: レベル内のノード割当をシャッフル（idxsShuffled）
+//  ※パラメータだけ版（保証はせず、確率を上げる）
 // =======================================================
 const layout = {
-  r0: 8.0, band: 0.0,
-  jitterTheta: 0.05,   // 角度ジッター（従来値）
+  r0: 8.0,
+  band: 0.0,            // computeRingRadius は r0 を返す（半径固定）
+  jitterTheta: 0.18,    // ← 約10°の角度ジッター：上下層の角一致を起きにくく
   jitterR: 0.0,
-  minAngleFloor: 0.22,
-  minAngleBuffer: 1.10,
-  relaxIters: 3
+  minAngleFloor: 0.28,  // ← 層内の最小角間隔を広げ、密集を抑制
+  minAngleBuffer: 1.00, // ← 均し過ぎを防ぐ
+  relaxIters: 4         // ← 近接回避の安定性UP
 };
 function urand(a,b){ return a + Math.random()*(b-a); }
 function modTau(x){ const t=2*Math.PI; x%=t; return x<0?x+t:x; }
 function computeRingRadius(){ return layout.r0; }
 
-// ★ レイヤごとのランダム回転（セッション毎に変わる）
+// レイヤごとのランダム回転（セッション毎に変わる）
 const layerRot = Array.from({ length: levelCount }, () => Math.random() * Math.PI * 2);
 
 function generateLayerAngles(L, count, rL){
@@ -247,7 +243,7 @@ const capGeo = makeCapGeometryFromSide(sideGeo, +island.height/2);
 const edgesGeo = new THREE.EdgesGeometry(sideGeo, 40);
 const edgeMat  = new THREE.LineBasicMaterial({ color: 0x000000, transparent:true, opacity: 0.25 });
 
-// ノード生成（★レベル内割当シャッフルを適用）
+// ノード生成（レベル内割当シャッフル適用）
 const nodes = new Array(matrixSize);
 for (let L=1; L<=levelCount; L++){
   const idxs = levelToIndices[L-1];
@@ -255,7 +251,7 @@ for (let L=1; L<=levelCount; L++){
   const rL = computeRingRadius();
   const angles = generateLayerAngles(L, count, rL);
 
-  // 提案4: レベル内のノードID割当をシャッフル
+  // レベル内のノードID割当をシャッフル
   const idxsShuffled = shuffle(idxs.slice());
 
   for (let k=0;k<count;k++){
@@ -412,7 +408,7 @@ function onDeviceOrientation(e){
     return;
   }
 
-  // ★絶対方位の維持（遷移とは独立）
+  // 絶対方位の維持（遷移とは独立）
   const yawTarget   = (yawUnwrapped - yawZeroUnwrapped) + yawOffset;
   const pitchTarget = clamp(pitchRaw - pitchZero, cam.pitchMin, cam.pitchMax);
 
@@ -524,17 +520,10 @@ function recenterNow(){
 }
 
 // =======================================================
-// 遷移演出：自己ループ＝ブラー、その他＝カメラ移動（向きは一切いじらない）
+// 遷移演出：★すべてブラー（位置だけスナップ／向きは一切いじらない）
 // =======================================================
 let isTransitioning = false;
 
-function pickTransitionType(i, j){
-  if (j === i) return 'self'; // 自己ループ
-  const L1 = EvPartition[i], L2 = EvPartition[j];
-  return (L1 === L2) ? 'horizontal' : 'diagonal';
-}
-
-// 自己ループ：ブラー中に位置だけスナップ
 function runBlurTransition(destIndex){
   if (isTransitioning) return; isTransitioning = true;
   shell.classList.add('fx--busy');
@@ -544,7 +533,7 @@ function runBlurTransition(destIndex){
 
   const mid = setTimeout(() => {
     currentIndex = destIndex;
-    snapCameraToIndex(currentIndex);
+    snapCameraToIndex(currentIndex);     // 位置のみ変更
     applyLayerFog(EvPartition[currentIndex]);
   }, FX_DURATION_MS/2);
 
@@ -557,45 +546,6 @@ function runBlurTransition(destIndex){
     isTransitioning = false;
   };
   shell.addEventListener('animationend', onEnd, { once:true });
-}
-
-// カメラ移動：位置だけ補間（向きはデバイス任せ）
-function animateCameraToIsland(destIndex, dur){
-  if (isTransitioning) return; isTransitioning = true;
-  shell.classList.add('fx--busy');
-
-  const P1 = camera.position.clone();
-  const P2 = islandEyePos(destIndex);
-
-  const t0 = performance.now();
-  const ease = u => 0.5 * (1 - Math.cos(Math.PI*u));
-
-  function tick(t){
-    const u = Math.min(1, (t - t0) / dur);
-    const e = ease(u);
-    camera.position.lerpVectors(P1, P2, e); // 位置のみ
-
-    if (u < 1) { requestAnimationFrame(tick); }
-    else {
-      camera.position.copy(P2);
-      currentIndex = destIndex;
-      applyLayerFog(EvPartition[currentIndex]);
-      if (EvPartition[currentIndex] === levelCount) alert("ゴールしました");
-      renderButtonsFor(currentIndex);
-      shell.classList.remove('fx--busy');
-      isTransitioning = false;
-    }
-  }
-  requestAnimationFrame(tick);
-}
-
-function runCameraHorizontal(destIndex){
-  animateCameraToIsland(destIndex, MOVE_DUR_HORIZONTAL);
-}
-function runCameraDiagonal(destIndex){
-  const dy = Math.abs(EvPartition[currentIndex] - EvPartition[destIndex]);
-  const dur = Math.max(MOVE_DUR_HORIZONTAL, MOVE_DUR_BASE + MOVE_DUR_PER_LEVEL * dy);
-  animateCameraToIsland(destIndex, dur);
 }
 
 controlBar.addEventListener('click', (e) => {
@@ -612,10 +562,7 @@ controlBar.addEventListener('click', (e) => {
   if (!sym) return;
 
   const j = symbolToCol[sym];
-  const type = pickTransitionType(currentIndex, j);
-  if (type === 'self') runBlurTransition(j);
-  else if (type === 'horizontal') runCameraHorizontal(j);
-  else runCameraDiagonal(j);
+  runBlurTransition(j); // ★常にブラー遷移
 });
 
 // =======================================================
