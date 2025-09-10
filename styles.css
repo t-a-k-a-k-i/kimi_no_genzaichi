@@ -60,8 +60,8 @@ body {
 
 /* RECENTER を右端に固定（左ボタン群との距離を最大化） */
 #controlBar .btn-recenter{
-  margin-left: auto;
-  position: sticky; right: 0;
+  margin-left: auto;          /* 左グループと最大距離 */
+  position: sticky; right: 0; /* 横スクロールでも右端固定 */
   z-index: 1;
   min-width: 120px;
   height: var(--btn);
@@ -84,7 +84,7 @@ body {
   #controlBar { padding: 10px 12px; gap: 10px; }
 }
 
-/* ブラー（自己ループで使用） */
+/* ブラー演出（すべての遷移で使用） */
 .shell.fx--blur {
   animation: fxBlur var(--fx-dur) ease-in-out both;
   will-change: filter;
