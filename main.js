@@ -21,8 +21,8 @@ const cam = {
   pitchMax:  Math.PI * 0.75
 };
 
-const FX_DURATION_MS = 300;  // 自己ループでのブラー
-// カメラ移動の時間（デバッグ用：自己ループ以外は移動アニメ）
+const FX_DURATION_MS = 300;  // 自己ループ時ブラー
+// カメラ移動の時間
 const MOVE_DUR_HORIZONTAL = 360;
 const MOVE_DUR_BASE = 360;
 const MOVE_DUR_PER_LEVEL = 140;
@@ -153,26 +153,39 @@ const levelToIndices = Array.from({ length: levelCount }, () => []);
 for (let i = 0; i < EvPartition.length; i++) levelToIndices[EvPartition[i]-1].push(i);
 
 // =======================================================
-// 配置（円柱ラップ＋螺旋＋ジッター＋リラックス）
+// 配置（円周＋レイヤ毎ランダム回転 + ジッター + リラックス）
+//  提案1: レイヤごとのランダム回転 layerRot[L-1] を導入
+//  提案4: レベル内のノード割当をシャッフル（idxsShuffled）
 // =======================================================
 const layout = {
   r0: 8.0, band: 0.0,
-  deltaPhiDeg: 137.5,
-  jitterTheta: 0.05, jitterR: 0.0,
-  minAngleFloor: 0.22, minAngleBuffer: 1.10,
+  jitterTheta: 0.05,   // 角度ジッター（従来値）
+  jitterR: 0.0,
+  minAngleFloor: 0.22,
+  minAngleBuffer: 1.10,
   relaxIters: 3
 };
 function urand(a,b){ return a + Math.random()*(b-a); }
 function modTau(x){ const t=2*Math.PI; x%=t; return x<0?x+t:x; }
 function computeRingRadius(){ return layout.r0; }
+
+// ★ レイヤごとのランダム回転（セッション毎に変わる）
+const layerRot = Array.from({ length: levelCount }, () => Math.random() * Math.PI * 2);
+
 function generateLayerAngles(L, count, rL){
   if (count<=0) return [];
-  if (count===1) return [modTau(L*THREE.MathUtils.degToRad(layout.deltaPhiDeg) + urand(-layout.jitterTheta, layout.jitterTheta))];
-  const base=[], dphi=THREE.MathUtils.degToRad(layout.deltaPhiDeg);
+  const rot = layerRot[L-1] || 0;
+
+  if (count===1) {
+    return [ modTau(rot + urand(-layout.jitterTheta, layout.jitterTheta)) ];
+  }
+
+  const base=[];
   for (let k=0;k<count;k++){
-    base.push(modTau(2*Math.PI*(k/count) + L*dphi + urand(-layout.jitterTheta,layout.jitterTheta)));
+    base.push(modTau(2*Math.PI*(k/count) + rot + urand(-layout.jitterTheta,layout.jitterTheta)));
   }
   base.sort((a,b)=>a-b);
+
   const R = island.radius, thetaMinReq = Math.max(layout.minAngleFloor, (2*R/rL)*layout.minAngleBuffer);
   for (let it=0; it<layout.relaxIters; it++){
     for (let i=0;i<count;i++){
@@ -234,13 +247,20 @@ const capGeo = makeCapGeometryFromSide(sideGeo, +island.height/2);
 const edgesGeo = new THREE.EdgesGeometry(sideGeo, 40);
 const edgeMat  = new THREE.LineBasicMaterial({ color: 0x000000, transparent:true, opacity: 0.25 });
 
-// ノード生成
+// ノード生成（★レベル内割当シャッフルを適用）
 const nodes = new Array(matrixSize);
 for (let L=1; L<=levelCount; L++){
-  const idxs = levelToIndices[L-1], count = idxs.length;
-  const rL = computeRingRadius(), angles = generateLayerAngles(L, count, rL);
+  const idxs = levelToIndices[L-1];
+  const count = idxs.length;
+  const rL = computeRingRadius();
+  const angles = generateLayerAngles(L, count, rL);
+
+  // 提案4: レベル内のノードID割当をシャッフル
+  const idxsShuffled = shuffle(idxs.slice());
+
   for (let k=0;k<count;k++){
-    const nodeIdx = idxs[k], th = angles[k];
+    const nodeIdx = idxsShuffled[k];
+    const th = angles[k];
     const x = rL*Math.cos(th), z = rL*Math.sin(th), y = (L-1)*levelGapY;
 
     const g = new THREE.Group();
@@ -343,7 +363,7 @@ function quaternionFromDevice(alphaRad, betaRad, gammaRad, orientRad){
 let prevYawRaw = null;
 let yawUnwrapped = 0;            // デバイスからの連続ヨー
 let yawZeroUnwrapped = null;     // 起動キャリブのゼロ
-let yawOffset = 0;               // ★表示用オフセット（RECENTERで更新）
+let yawOffset = 0;               // 表示用オフセット（RECENTERで更新）
 
 let pitchZero = null;
 let zeroStart = null, zYawAcc = 0, zPitchAcc = 0, zN = 0;
@@ -392,7 +412,7 @@ function onDeviceOrientation(e){
     return;
   }
 
-  // ★絶対方位の維持：遷移の有無に関係なく「デバイスの向きそのまま」
+  // ★絶対方位の維持（遷移とは独立）
   const yawTarget   = (yawUnwrapped - yawZeroUnwrapped) + yawOffset;
   const pitchTarget = clamp(pitchRaw - pitchZero, cam.pitchMin, cam.pitchMax);
 
@@ -445,7 +465,7 @@ window.addEventListener('orientationchange', () => {
   prevYawRaw = null;
   yawUnwrapped = 0;
   yawZeroUnwrapped = null;
-  yawOffset = 0;                 // ★オフセットもリセット
+  yawOffset = 0;
   pitchZero = null;
   zeroStart = null; zYawAcc = 0; zPitchAcc = 0; zN = 0;
 });
@@ -497,16 +517,14 @@ function renderButtonsFor(i){
 }
 
 function recenterNow(){
-  // 今の向きを新ゼロにするが、見た目は変えない：
-  // yawApplied = (yawUnwrapped - yawZero) + yawOffset
-  // → yawZero を「今」に、yawOffset を「今の適用yaw」に置く
+  // 今の向きを新ゼロに：見た目不変のため yawOffset に現在値を記憶
   yawZeroUnwrapped = yawUnwrapped;
-  yawOffset = yaw;                // 見た目不変
+  yawOffset = yaw;
   pitchZero = lastPitchRaw;
 }
 
 // =======================================================
-// 遷移演出：自己ループ＝ブラー、その他＝カメラ移動（★方位補償は一切しない）
+// 遷移演出：自己ループ＝ブラー、その他＝カメラ移動（向きは一切いじらない）
 // =======================================================
 let isTransitioning = false;
 
@@ -516,7 +534,7 @@ function pickTransitionType(i, j){
   return (L1 === L2) ? 'horizontal' : 'diagonal';
 }
 
-// --- 自己ループ：ブラー中間で位置だけスナップ ---
+// 自己ループ：ブラー中に位置だけスナップ
 function runBlurTransition(destIndex){
   if (isTransitioning) return; isTransitioning = true;
   shell.classList.add('fx--busy');
@@ -541,7 +559,7 @@ function runBlurTransition(destIndex){
   shell.addEventListener('animationend', onEnd, { once:true });
 }
 
-// --- カメラ移動：位置だけを補間（向きは完全維持） ---
+// カメラ移動：位置だけ補間（向きはデバイス任せ）
 function animateCameraToIsland(destIndex, dur){
   if (isTransitioning) return; isTransitioning = true;
   shell.classList.add('fx--busy');
@@ -555,8 +573,7 @@ function animateCameraToIsland(destIndex, dur){
   function tick(t){
     const u = Math.min(1, (t - t0) / dur);
     const e = ease(u);
-
-    camera.position.lerpVectors(P1, P2, e); // ★位置のみ
+    camera.position.lerpVectors(P1, P2, e); // 位置のみ
 
     if (u < 1) { requestAnimationFrame(tick); }
     else {
@@ -605,7 +622,7 @@ controlBar.addEventListener('click', (e) => {
 // ループ・初期化
 // =======================================================
 function updateCameraRotation(){
-  // 表示用にだけヨーを [-π,π) に正規化（内部は連続でもOK）
+  // 表示用にだけヨーを [-π,π) に正規化
   const yawForCam = normAng(yaw);
   camera.rotation.set(pitch, yawForCam, 0, 'YXZ');
 }
