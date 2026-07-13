@@ -1,0 +1,148 @@
+:root{
+  --hud-h: 84px;
+  --btn: 56px;
+  --gap: 12px;
+  --fx-dur: 300ms;       /* main.js の FX_DURATION_MS と同期させること */
+  --fx-strength: 7px;
+  --safe-b: env(safe-area-inset-bottom, 0px);  /* F-6-4: iPhoneセーフエリア */
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: #0d0f12;
+  color: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Sans",
+               "Noto Sans JP", "Yu Gothic UI", "Yu Gothic", "Meiryo", sans-serif;
+}
+
+.shell { position: relative; width: 100%; height: 100%; }
+
+#scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: calc(100% - var(--hud-h) - var(--safe-b));
+  touch-action: none;
+  user-select: none;
+  display: block;
+}
+
+#controlBar {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: calc(var(--hud-h) + var(--safe-b));
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 12px 16px calc(12px + var(--safe-b));
+  overflow-x: auto;
+  background: rgba(10,12,15,0.9);
+  backdrop-filter: blur(6px);
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+#controlBar button {
+  min-width: var(--btn);
+  height: var(--btn);
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid #6c7480;
+  background: #151a20;
+  color: #e9eef7;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+#controlBar button:active { transform: translateY(1px); }
+
+/* RECENTER を右端に固定（左ボタン群との距離を最大化） */
+#controlBar .btn-recenter{
+  margin-left: auto;          /* 左グループと最大距離 */
+  position: sticky; right: 0; /* 横スクロールでも右端固定 */
+  z-index: 1;
+  min-width: 120px;
+  height: var(--btn);
+  font-size: 16px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid #6c7480;
+  background: #0f141a;
+  color: #e9eef7;
+}
+
+#controlBar::-webkit-scrollbar { height: 6px; }
+#controlBar::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 999px;
+}
+
+@media (max-width: 480px) {
+  :root { --btn: 52px; --hud-h: 78px; }
+  #controlBar { padding: 10px 12px calc(10px + var(--safe-b)); gap: 10px; }
+}
+
+/* ブラー演出（すべての遷移で使用） */
+.shell.fx--blur {
+  animation: fxBlur var(--fx-dur) ease-in-out both;
+  will-change: filter;
+}
+@keyframes fxBlur {
+  0%   { filter: blur(0px); }
+  50%  { filter: blur(var(--fx-strength)); }
+  100% { filter: blur(0px); }
+}
+
+/* F-6-3: OSの「視差効果を減らす」設定を尊重（JS側でも即時カットに切替済み。
+   CSS側は多重防御として演出を無効化する） */
+@media (prefers-reduced-motion: reduce) {
+  .shell.fx--blur { animation: none; }
+}
+
+/* トランジション中はHUD無効化 */
+.shell.fx--busy #controlBar {
+  pointer-events: none;
+  opacity: 0.75;
+}
+
+/* オーバーレイ共通（許可要求・ゴール表示） */
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0,0,0,0.88);
+  z-index: 9999;
+}
+.overlay[hidden] { display: none; }
+.overlay__inner {
+  max-width: 520px;
+  text-align: center;
+  line-height: 1.6;
+}
+.overlay h1 { margin: 0 0 12px; font-size: 24px; }
+.overlay p  { margin: 0 0 16px; color: #cfd6e6; }
+.overlay__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+.btn-primary {
+  appearance: none; border: 0; cursor: pointer;
+  min-width: 220px; height: 48px; padding: 0 16px;
+  border-radius: 12px; font-size: 16px; font-weight: 700;
+  background: #3b82f6; color: #fff;
+}
+.btn-secondary {
+  appearance: none; cursor: pointer;
+  min-width: 160px; height: 48px; padding: 0 16px;
+  border-radius: 12px; font-size: 16px; font-weight: 700;
+  background: transparent; color: #e9eef7;
+  border: 1px solid #6c7480;
+}

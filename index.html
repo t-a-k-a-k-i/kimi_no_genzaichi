@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <!-- F-6-4: アクセシビリティのため maximum-scale=1 を撤廃（ピンチズームを許可） -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>君の現在地 — 3D Maze Prototype</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- three.js（グローバル THREE）
+       r160 は UMD ビルド（three.min.js）を含む最後のバージョン（r161 で削除）。
+       three.js を更新する場合は ES Modules への移行が必要（README 参照）。 -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <!-- センサー許可要求（DeviceOrientationEvent.requestPermission を持つ環境で表示） -->
+  <div id="permissionOverlay" class="overlay" hidden>
+    <div class="overlay__inner">
+      <h1>センサー許可のお願い</h1>
+      <p id="permissionMsg">このゲームは端末の向き（ジャイロ）を利用します。下のボタンを押して「許可」を選択してください。</p>
+      <button id="enableSensors" type="button" class="btn-primary">センサーを有効にする</button>
+    </div>
+  </div>
+
+  <!-- ゴール到達オーバーレイ（F-6-5: ゴール仕様の確定） -->
+  <div id="goalOverlay" class="overlay" hidden>
+    <div class="overlay__inner">
+      <h1>ゴールしました</h1>
+      <p>最上層に到達しました。新しい迷路で再挑戦するか、このまま探索を続けられます。</p>
+      <div class="overlay__actions">
+        <button id="goalRestart" type="button" class="btn-primary">もう一度（迷路を再生成）</button>
+        <button id="goalContinue" type="button" class="btn-secondary">探索を続ける</button>
+      </div>
+    </div>
+  </div>
+
+  <main class="shell" id="appShell">
+    <canvas id="scene" aria-label="3D表示"></canvas>
+    <nav id="controlBar" aria-label="分岐ボタン群" role="toolbar"></nav>
+  </main>
+
+  <script defer src="main.js"></script>
+</body>
+</html>
